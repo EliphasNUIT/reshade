@@ -18,7 +18,6 @@ static std::unordered_map<HWND, std::weak_ptr<reshade::input>> s_windows;
 reshade::input::input(window_handle window)
 	: _window(window)
 {
-	assert(window != nullptr);
 }
 
 #if RESHADE_UWP
@@ -41,6 +40,8 @@ void reshade::input::register_window_with_raw_input(window_handle window, bool n
 		no_legacy_keyboard = no_legacy_mouse = true;
 #endif
 
+	assert(window != nullptr);
+
 	const std::lock_guard<std::mutex> lock(s_windows_mutex);
 
 	const auto flags = (no_legacy_keyboard ? 0x1u : 0u) | (no_legacy_mouse ? 0x2u : 0u);
@@ -50,6 +51,8 @@ void reshade::input::register_window_with_raw_input(window_handle window, bool n
 }
 std::shared_ptr<reshade::input> reshade::input::register_window(window_handle window)
 {
+	assert(window != nullptr);
+
 	const std::lock_guard<std::mutex> lock(s_windows_mutex);
 
 	const auto insert = s_windows.emplace(static_cast<HWND>(window), std::weak_ptr<input>());
@@ -584,6 +587,7 @@ HOOK_EXPORT BOOL WINAPI HookRegisterRawInputDevices(PCRAWINPUTDEVICE pRawInputDe
 #if RESHADE_VERBOSE_LOG
 	LOG(DEBUG) << "Redirecting " << "RegisterRawInputDevices" << '(' << "pRawInputDevices = " << pRawInputDevices << ", uiNumDevices = " << uiNumDevices << ", cbSize = " << cbSize << ')' << " ...";
 #endif
+
 	for (UINT i = 0; i < uiNumDevices; ++i)
 	{
 		const auto &device = pRawInputDevices[i];
@@ -606,7 +610,8 @@ HOOK_EXPORT BOOL WINAPI HookRegisterRawInputDevices(PCRAWINPUTDEVICE pRawInputDe
 		reshade::input::register_window_with_raw_input(device.hwndTarget, device.usUsage == 0x06 && (device.dwFlags & RIDEV_NOLEGACY) != 0, device.usUsage == 0x02 && (device.dwFlags & RIDEV_NOLEGACY) != 0);
 	}
 
-	if (!reshade::hooks::call(HookRegisterRawInputDevices)(pRawInputDevices, uiNumDevices, cbSize))
+	static const auto trampoline = reshade::hooks::call(HookRegisterRawInputDevices);
+	if (!trampoline(pRawInputDevices, uiNumDevices, cbSize))
 	{
 		LOG(WARN) << "RegisterRawInputDevices" << " failed with error code " << GetLastError() << '.';
 		return FALSE;

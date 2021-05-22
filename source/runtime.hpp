@@ -12,14 +12,13 @@
 #include <functional>
 #include <filesystem>
 
+#include "reshade_api.hpp"
 #if RESHADE_GUI
-#include "imgui_editor.hpp"
+#include "imgui_code_editor.hpp"
 
 struct ImDrawData;
 struct ImGuiContext;
 #endif
-
-extern volatile long g_network_traffic;
 
 namespace reshade
 {
@@ -33,7 +32,7 @@ namespace reshade
 	/// Platform independent base class for the main ReShade runtime.
 	/// This class needs to be implemented for all supported rendering APIs.
 	/// </summary>
-	class runtime
+	class runtime : public api::effect_runtime
 	{
 	public:
 		/// <summary>
@@ -42,13 +41,9 @@ namespace reshade
 		bool is_initialized() const { return _is_initialized; }
 
 		/// <summary>
-		/// Return the frame width in pixels.
+		/// Return the frame width and height in pixels.
 		/// </summary>
-		unsigned int frame_width() const { return _width; }
-		/// <summary>
-		/// Return the frame height in pixels.
-		/// </summary>
-		unsigned int frame_height() const { return _height; }
+		void get_frame_width_and_height(uint32_t *width, uint32_t *height) const final { *width = _width; *height = _height; }
 
 		/// <summary>
 		/// Create a copy of the current frame image in system memory.
@@ -65,18 +60,12 @@ namespace reshade
 		/// Create a new texture with the specified dimensions.
 		/// </summary>
 		/// <param name="texture">The texture description.</param>
-		virtual bool init_texture(texture &texture) = 0;
-		/// <summary>
-		/// Upload the image data of a texture.
-		/// </summary>
-		/// <param name="texture">The texture to update.</param>
-		/// <param name="pixels">The 32bpp RGBA image data to update the texture with.</param>
-		virtual void upload_texture(const texture &texture, const uint8_t *pixels) = 0;
+		bool init_texture(texture &texture);
 		/// <summary>
 		/// Destroy an existing texture.
 		/// </summary>
 		/// <param name="texture">The texture to destroy.</param>
-		virtual void destroy_texture(texture &texture) = 0;
+		void destroy_texture(texture &texture);
 
 		/// <summary>
 		/// Get the value of a uniform variable.
@@ -116,14 +105,14 @@ namespace reshade
 		/// <param name="variable">The variable to update.</param>
 		void reset_uniform_value(uniform &variable);
 
-#if RESHADE_GUI
 		/// <summary>
-		/// Register a function to be called when the UI is drawn.
+		/// Updates the values of all uniform variables with a "source" annotation set to <paramref name="source"/> to the specified <paramref name="values"/>.
 		/// </summary>
-		/// <param name="label">Name of the widget.</param>
-		/// <param name="function">The callback function.</param>
-		void subscribe_to_ui(std::string label, std::function<void()> function) { _menu_callables.emplace_back(label, function); }
-#endif
+		void update_uniform_variables(const char *source, const bool *values, size_t count, size_t array_index) final;
+		void update_uniform_variables(const char *source, const float *values, size_t count, size_t array_index) final;
+		void update_uniform_variables(const char *source, const int32_t *values, size_t count, size_t array_index) final;
+		void update_uniform_variables(const char *source, const uint32_t *values, size_t count, size_t array_index) final;
+
 		/// <summary>
 		/// Register a function to be called when user configuration is loaded.
 		/// </summary>
@@ -137,7 +126,7 @@ namespace reshade
 
 	protected:
 		runtime();
-		virtual ~runtime();
+		~runtime();
 
 		/// <summary>
 		/// Callback function called when the runtime is initialized.
@@ -168,16 +157,16 @@ namespace reshade
 		/// Initialize resources for the effect and load the effect module.
 		/// </summary>
 		/// <param name="effect_index">The ID of the effect.</param>
-		virtual bool init_effect(size_t effect_index) = 0;
+		bool init_effect(size_t effect_index);
 		/// <summary>
 		/// Unload the specified effect.
 		/// </summary>
 		/// <param name="effect_index">The ID of the effect.</param>
-		virtual void unload_effect(size_t effect_index);
+		void unload_effect(size_t effect_index);
 		/// <summary>
 		/// Unload all effects currently loaded.
 		/// </summary>
-		virtual void unload_effects();
+		void unload_effects();
 
 		/// <summary>
 		/// Reload only the specified effect.
@@ -199,6 +188,10 @@ namespace reshade
 		/// </summary>
 		bool save_effect_cache(const std::filesystem::path &source_file, const size_t hash, const std::string &source) const;
 		bool save_effect_cache(const std::filesystem::path &source_file, const std::string &entry_point, const size_t hash, const std::vector<char> &cso, const std::string &dasm) const;
+		/// <summary>
+		/// Remove all compiled effect data from disk.
+		/// </summary>
+		void clear_effect_cache();
 
 		/// <summary>
 		/// Load image files and update textures with image data.
@@ -213,14 +206,15 @@ namespace reshade
 		/// Render all passes in a technique.
 		/// </summary>
 		/// <param name="technique">The technique to render.</param>
-		virtual void render_technique(technique &technique) = 0;
-#if RESHADE_GUI
-		/// <summary>
-		/// Render command lists obtained from ImGui.
-		/// </summary>
-		/// <param name="data">The draw data to render.</param>
-		virtual void render_imgui_draw_data(ImDrawData *draw_data) = 0;
-#endif
+		void render_technique(technique &technique);
+
+		void update_texture_bindings(const char *semantic, api::resource_view srv) final;
+
+		virtual bool compile_effect(effect &effect, api::shader_stage type, const std::string &entry_point, api::shader_module &out) = 0;
+
+		virtual api::resource_view get_backbuffer(bool) { return { 0 }; }
+		virtual api::resource get_backbuffer_resource() { return { 0 }; }
+		virtual api::format get_backbuffer_format() { return api::format::unknown; }
 
 		/// <summary>
 		/// Returns the texture object corresponding to the passed <paramref name="unique_name"/>.
@@ -230,8 +224,7 @@ namespace reshade
 
 		bool _is_initialized = false;
 		bool _performance_mode = false;
-		bool _has_high_network_activity = false;
-		bool _has_depth_texture = false;
+		bool _gather_gpu_statistics = true;
 		unsigned int _width = 0;
 		unsigned int _height = 0;
 		unsigned int _window_width = 0;
@@ -242,8 +235,6 @@ namespace reshade
 		unsigned int _color_bit_depth = 8;
 
 		uint64_t _framecount = 0;
-		unsigned int _vertices = 0;
-		unsigned int _drawcalls = 0;
 
 		std::vector<effect> _effects;
 		std::vector<texture> _textures;
@@ -319,6 +310,7 @@ namespace reshade
 
 		// === Effect Loading ===
 		bool _no_debug_info = 0;
+		bool _no_effect_cache = false;
 		bool _no_reload_on_init = false;
 		bool _effect_load_skipping = false;
 		bool _load_option_disable_skipping = false;
@@ -340,7 +332,7 @@ namespace reshade
 
 		// === Screenshots ===
 		bool _should_save_screenshot = false;
-		bool _screenshot_save_ui = false;
+		bool _screenshot_save_gui = false;
 		bool _screenshot_save_before = false;
 		bool _screenshot_save_success = true;
 		bool _screenshot_include_preset = false;
@@ -361,6 +353,16 @@ namespace reshade
 		unsigned int _preset_transition_delay = 1000;
 		std::filesystem::path _current_preset_path;
 		std::chrono::high_resolution_clock::time_point _last_preset_switching_time;
+
+		api::resource _backbuffer_texture = {};
+		api::resource_view _backbuffer_texture_view[2] = {};
+		api::format _effect_stencil_format = api::format::unknown;
+		api::resource _effect_stencil = {};
+		api::resource_view _effect_stencil_view = {};
+		api::resource _empty_texture = {};
+		api::resource_view _empty_texture_view = {};
+		std::unordered_map<size_t, api::sampler> _effect_sampler_states;
+		std::unordered_map<std::string, api::resource_view> _texture_semantic_bindings;
 
 #if RESHADE_GUI
 		struct editor_instance
@@ -385,6 +387,9 @@ namespace reshade
 		void draw_gui_statistics();
 		void draw_gui_log();
 		void draw_gui_about();
+#if RESHADE_ADDON
+		void draw_gui_addons();
+#endif
 
 		void draw_variable_editor();
 		void draw_technique_editor();
@@ -394,9 +399,31 @@ namespace reshade
 		void open_code_editor(editor_instance &instance);
 		void draw_code_editor(editor_instance &instance);
 
+		bool init_imgui_resources();
+		void render_imgui_draw_data(ImDrawData *draw_data);
+
+		static const uint32_t NUM_IMGUI_BUFFERS = 4;
+
+		struct imgui_resources
+		{
+			api::resource font_atlas = {};
+			api::resource_view font_atlas_view = {};
+
+			api::sampler sampler_state = {};
+
+			api::pipeline pipeline = {};
+			api::pipeline_layout pipeline_layout = {};
+
+			api::descriptor_set_layout table_layouts[2] = {};
+
+			api::resource indices[NUM_IMGUI_BUFFERS] = {};
+			api::resource vertices[NUM_IMGUI_BUFFERS] = {};
+			int num_indices[NUM_IMGUI_BUFFERS] = {};
+			int num_vertices[NUM_IMGUI_BUFFERS] = {};
+		} _imgui;
+
 		// === User Interface ===
 		ImGuiContext *_imgui_context = nullptr;
-		std::unique_ptr<texture> _imgui_font_atlas;
 		std::vector<std::pair<std::string, std::function<void()>>> _menu_callables;
 		bool _show_splash = true;
 		bool _show_overlay = false;
@@ -423,6 +450,10 @@ namespace reshade
 		unsigned int _effects_expanded_state = 2;
 		float _variable_editor_height = 300.0f;
 
+		// === User Interface - Add-ons ===
+		char _addons_filter[64] = {};
+		int _open_addon_index = 0;
+
 		// === User Interface - Settings ===
 		int _font_size = 13;
 		int _editor_font_size = 13;
@@ -436,7 +467,7 @@ namespace reshade
 		bool _show_force_load_effects_button = true;
 
 		// === User Interface - Statistics ===
-		void *_preview_texture = nullptr;
+		api::resource_view _preview_texture = { 0 };
 		unsigned int _preview_size[3] = { 0, 0, 0xFFFFFFFF };
 
 		// === User Interface - Log ===

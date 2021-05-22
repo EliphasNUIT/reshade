@@ -5,24 +5,22 @@
 
 #pragma once
 
-#include "state_tracking.hpp"
+#include "reshade_api_device_context.hpp"
 
 struct D3D11Device;
 
-struct DECLSPEC_UUID("27B0246B-2152-4D42-AD11-32489472238F") D3D11DeviceContext : ID3D11DeviceContext4
+struct DECLSPEC_UUID("27B0246B-2152-4D42-AD11-32489472238F") D3D11DeviceContext final : ID3D11DeviceContext4, public reshade::d3d11::device_context_impl
 {
 	D3D11DeviceContext(D3D11Device *device, ID3D11DeviceContext  *original);
 	D3D11DeviceContext(D3D11Device *device, ID3D11DeviceContext1 *original);
 	D3D11DeviceContext(D3D11Device *device, ID3D11DeviceContext2 *original);
 	D3D11DeviceContext(D3D11Device *device, ID3D11DeviceContext3 *original);
 
-	D3D11DeviceContext(const D3D11DeviceContext &) = delete;
-	D3D11DeviceContext &operator=(const D3D11DeviceContext &) = delete;
-
+	#pragma region IUnknown
 	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObj) override;
 	ULONG   STDMETHODCALLTYPE AddRef() override;
 	ULONG   STDMETHODCALLTYPE Release() override;
-
+	#pragma endregion
 	#pragma region ID3D11DeviceChild
 	void    STDMETHODCALLTYPE GetDevice(ID3D11Device **ppDevice) override;
 	HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID guid, UINT *pDataSize, void *pData) override;
@@ -184,9 +182,16 @@ struct DECLSPEC_UUID("27B0246B-2152-4D42-AD11-32489472238F") D3D11DeviceContext 
 
 	bool check_and_upgrade_interface(REFIID riid);
 
+#if RESHADE_ADDON
+	void invoke_bind_render_targets_event(UINT count, ID3D11RenderTargetView *const *targets, ID3D11DepthStencilView *dsv);
+	void invoke_bind_vertex_buffers_event(UINT first, UINT count, ID3D11Buffer *const *buffers, const UINT *strides, const UINT *offsets);
+	void invoke_bind_samplers_event(reshade::api::shader_stage stage, UINT first, UINT count, ID3D11SamplerState *const *objects);
+	void invoke_bind_shader_resource_views_event(reshade::api::shader_stage stage, UINT first, UINT count, ID3D11ShaderResourceView *const *objects);
+	void invoke_bind_unordered_access_views_event(reshade::api::shader_stage stage, UINT first, UINT count, ID3D11UnorderedAccessView *const *objects);
+	void invoke_bind_constant_buffers_event(reshade::api::shader_stage stage, UINT first, UINT count, ID3D11Buffer *const *objects);
+#endif
+
 	LONG _ref = 1;
-	ID3D11DeviceContext *_orig;
 	unsigned int _interface_version;
 	D3D11Device *const _device;
-	reshade::d3d11::state_tracking_context _state;
 };

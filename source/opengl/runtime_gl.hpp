@@ -6,112 +6,43 @@
 #pragma once
 
 #include "runtime.hpp"
-#include "state_block.hpp"
-#include "state_tracking.hpp"
-#include <unordered_set>
+#include "reshade_api_device.hpp"
+#include "reshade_api_type_utils.hpp"
+#include "state_block_gl.hpp"
 
 namespace reshade::opengl
 {
-	class runtime_gl : public runtime
+	class runtime_impl : public runtime, public device_impl
 	{
 	public:
-		runtime_gl();
+		runtime_impl(HDC hdc, HGLRC hglrc);
+		~runtime_impl();
+
+		bool get_user_data(const uint8_t guid[16], void **ptr) const final { return device_impl::get_user_data(guid, ptr); }
+		void set_user_data(const uint8_t guid[16], void *const ptr)  final { device_impl::set_user_data(guid, ptr); }
+
+		uint64_t get_native_object() const final { return reinterpret_cast<uintptr_t>(*_hdcs.begin()); } // Simply return the first device context
+
+		api::device *get_device() final { return this; }
+		api::command_queue *get_command_queue() final { return this; }
 
 		bool on_init(HWND hwnd, unsigned int width, unsigned int height);
 		void on_reset();
-		void on_present();
+		void on_present(bool default_fbo = true);
+		bool on_layer_submit(uint32_t eye, GLuint source_object, bool is_rbo, bool is_array, const float bounds[4], GLuint *target_rbo);
 
-		bool capture_screenshot(uint8_t *buffer) const override;
+		bool capture_screenshot(uint8_t *buffer) const final;
 
-		state_tracking _state_tracking;
-		bool _compatibility_context = false;
-		std::unordered_set<HDC> _hdcs;
+		bool compile_effect(effect &effect, api::shader_stage type, const std::string &entry_point, api::shader_module &out) final;
+
+		api::resource_view get_backbuffer(bool srgb) final { return make_resource_view_handle(GL_RENDERBUFFER, _rbo, srgb ? 0x2 : 0); }
+		api::resource get_backbuffer_resource() final { return make_resource_handle(GL_RENDERBUFFER, _rbo);	}
+		api::format get_backbuffer_format() final { return convert_format(_default_color_format); }
 
 	private:
-		bool init_effect(size_t index) override;
-		void unload_effect(size_t index) override;
-		void unload_effects() override;
-
-		bool init_texture(texture &texture) override;
-		void upload_texture(const texture &texture, const uint8_t *data) override;
-		void destroy_texture(texture &texture) override;
-		void generate_mipmaps(const struct tex_data *impl);
-
-		void render_technique(technique &technique) override;
-
-		enum BUF
-		{
-#if RESHADE_GUI
-			VBO_IMGUI,
-			IBO_IMGUI,
-#else
-			BUF_DUMMY,
-#endif
-				NUM_BUF
-		};
-		enum TEX
-		{
-			TEX_BACK,
-			TEX_BACK_SRGB,
-			TEX_DEPTH,
-				NUM_TEX
-		};
-		enum VAO
-		{
-			VAO_FX,
-#if RESHADE_GUI
-			VAO_IMGUI,
-#endif
-				NUM_VAO
-		};
-		enum FBO
-		{
-			FBO_BACK,
-			FBO_BLIT,
-			FBO_CLEAR,
-			FBO_DEPTH_SRC,
-			FBO_DEPTH_DEST,
-				NUM_FBO
-		};
-		enum RBO
-		{
-			RBO_COLOR,
-			RBO_STENCIL,
-				NUM_RBO
-		};
-
 		state_block _app_state;
-
-		GLuint _buf[NUM_BUF] = {};
-		GLuint _tex[NUM_TEX] = {};
-		GLuint _vao[NUM_VAO] = {};
-		GLuint _fbo[NUM_FBO] = {}, _current_fbo = 0;
-		GLuint _rbo[NUM_RBO] = {};
-		GLuint _mipmap_program = 0;
-		GLenum _default_depth_format = GL_NONE;
-		std::vector<GLuint> _effect_ubos;
+		GLuint _rbo = 0;
+		GLuint _fbo[2] = {}, _current_fbo = 0;
 		std::vector<GLuint> _reserved_texture_names;
-		std::unordered_map<size_t, GLuint> _effect_sampler_states;
-
-#if RESHADE_GUI
-		void init_imgui_resources();
-		void render_imgui_draw_data(ImDrawData *data) override;
-
-		struct imgui_resources
-		{
-			GLuint program = 0;
-		} _imgui;
-#endif
-
-#if RESHADE_DEPTH
-		void draw_depth_debug_menu();
-		void update_depth_texture_bindings(state_tracking::depthstencil_info info);
-
-		bool _copy_depth_source = true;
-		GLuint _depth_source = 0;
-		GLuint _depth_source_width = 0, _depth_source_height = 0;
-		GLenum _depth_source_format = 0;
-		GLuint _depth_source_override = std::numeric_limits<GLuint>::max();
-#endif
 	};
 }

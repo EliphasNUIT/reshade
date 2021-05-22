@@ -6,81 +6,43 @@
 #pragma once
 
 #include "runtime.hpp"
-#include "state_block.hpp"
-#include "state_tracking.hpp"
+#include "reshade_api_device.hpp"
+#include "reshade_api_type_utils.hpp"
+#include "state_block_d3d9.hpp"
 
 namespace reshade::d3d9
 {
-	class runtime_d3d9 : public runtime
+	class runtime_impl : public api::api_object_impl<IDirect3DSwapChain9 *, runtime>
 	{
 	public:
-		runtime_d3d9(IDirect3DDevice9 *device, IDirect3DSwapChain9 *swapchain, state_tracking *state_tracking);
-		~runtime_d3d9();
+		runtime_impl(device_impl *device, IDirect3DSwapChain9 *swapchain);
+		~runtime_impl();
 
-		bool on_init(const D3DPRESENT_PARAMETERS &pp);
+		api::device *get_device() final { return _device_impl; }
+		api::command_queue *get_command_queue() final { return _device_impl; }
+
+		bool on_init();
 		void on_reset();
 		void on_present();
 
-		bool capture_screenshot(uint8_t *buffer) const override;
+		bool capture_screenshot(uint8_t *buffer) const final;
+
+		bool compile_effect(effect &effect, api::shader_stage type, const std::string &entry_point, api::shader_module &out) final;
+
+		api::resource_view get_backbuffer(bool srgb) final { return { reinterpret_cast<uintptr_t>(_backbuffer_resolved.get()) | (srgb ? 1 : 0) }; }
+		api::resource get_backbuffer_resource() final { return { reinterpret_cast<uintptr_t>(_backbuffer_resolved.get()) }; }
+		api::format get_backbuffer_format() final { return convert_format(_backbuffer_format); }
 
 	private:
-		bool init_effect(size_t index) override;
-		void unload_effect(size_t index) override;
-		void unload_effects() override;
-
-		bool init_texture(texture &texture) override;
-		void upload_texture(const texture &texture, const uint8_t *pixels) override;
-		void destroy_texture(texture &texture) override;
-
-		void render_technique(technique &technique) override;
+		const com_ptr<IDirect3DDevice9> _device;
+		device_impl *const _device_impl;
 
 		state_block _app_state;
-		state_tracking &_state_tracking;
-		com_ptr<IDirect3D9> _d3d;
-		const com_ptr<IDirect3DDevice9> _device;
-		const com_ptr<IDirect3DSwapChain9> _swapchain;
-
-		unsigned int _max_vertices = 0;
-		unsigned int _num_samplers;
-		unsigned int _num_simultaneous_rendertargets;
-		unsigned int _behavior_flags;
 
 		D3DFORMAT _backbuffer_format = D3DFMT_UNKNOWN;
 		com_ptr<IDirect3DSurface9> _backbuffer;
 		com_ptr<IDirect3DSurface9> _backbuffer_resolved;
-		com_ptr<IDirect3DTexture9> _backbuffer_texture;
-		com_ptr<IDirect3DSurface9> _backbuffer_texture_surface;
 
 		HMODULE _d3d_compiler = nullptr;
-		com_ptr<IDirect3DSurface9> _effect_stencil;
-		com_ptr<IDirect3DVertexBuffer9> _effect_vertex_buffer;
-		com_ptr<IDirect3DVertexDeclaration9> _effect_vertex_layout;
-
-#if RESHADE_GUI
-		bool init_imgui_resources();
-		void render_imgui_draw_data(ImDrawData *data) override;
-
-		struct imgui_resources
-		{
-			com_ptr<IDirect3DStateBlock9> state;
-
-			com_ptr<IDirect3DIndexBuffer9> indices;
-			com_ptr<IDirect3DVertexBuffer9> vertices;
-			int num_indices = 0;
-			int num_vertices = 0;
-		} _imgui;
-#endif
-
-#if RESHADE_DEPTH
-		void draw_depth_debug_menu();
-		void update_depth_texture_bindings(com_ptr<IDirect3DSurface9> surface);
-
-		com_ptr<IDirect3DTexture9> _depth_texture;
-		com_ptr<IDirect3DSurface9> _depth_surface;
-
-		bool _disable_intz = false;
-		bool _reset_buffer_detection = false;
-		IDirect3DSurface9 *_depth_surface_override = nullptr;
-#endif
 	};
 }

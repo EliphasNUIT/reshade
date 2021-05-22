@@ -49,6 +49,10 @@ enum {
 #define int4x2 { reshadefx::type::t_int, 4, 2 }
 #define int4x3 { reshadefx::type::t_int, 4, 3 }
 #define int4x4 { reshadefx::type::t_int, 4, 4 }
+#define out_int { reshadefx::type::t_int, 1, 1, reshadefx::type::q_out }
+#define out_int2 { reshadefx::type::t_int, 2, 1, reshadefx::type::q_out }
+#define out_int3 { reshadefx::type::t_int, 3, 1, reshadefx::type::q_out }
+#define out_int4 { reshadefx::type::t_int, 4, 1, reshadefx::type::q_out }
 #define inout_int { reshadefx::type::t_int, 1, 1, reshadefx::type::q_inout | reshadefx::type::q_groupshared }
 #define uint { reshadefx::type::t_uint, 1, 1 }
 #define uint2 { reshadefx::type::t_uint, 2, 1 }
@@ -118,6 +122,8 @@ unsigned int reshadefx::type::rank(const type &src, const type &dst)
 		return src.definition == dst.definition ? 32 : 0; // Structs are only compatible if they are the same type
 	if (!src.is_numeric() || !dst.is_numeric())
 		return src.base == dst.base ? 32 : 0; // Numeric values are not compatible with other types
+	if (src.is_matrix() && (!dst.is_matrix() || src.rows != dst.rows || src.cols != dst.cols))
+		return 0; // Matrix truncation or dimensions do not match
 
 	// This table is based on the following rules:
 	//  - Floating point has a higher rank than integer types

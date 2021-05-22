@@ -155,8 +155,10 @@ bool reshadefx::parser::parse_statement(bool scoped)
 		{
 			unroll = 0x1,
 			dont_unroll = 0x2,
-			flatten = 0x4,
-			dont_flatten = 0x8,
+			flatten = (0x1 << 4),
+			dont_flatten = (0x2 << 4),
+			switch_force_case = (0x4 << 4),
+			switch_call = (0x8 << 4)
 		};
 
 		const auto attribute = std::move(_token_next.literal_as_string);
@@ -172,6 +174,10 @@ bool reshadefx::parser::parse_statement(bool scoped)
 			selection_control |= flatten;
 		else if (attribute == "branch")
 			selection_control |= dont_flatten;
+		else if (attribute == "forcecase")
+			selection_control |= switch_force_case;
+		else if (attribute == "call")
+			selection_control |= switch_call;
 		else
 			warning(_token.location, 0, "unknown attribute");
 
@@ -182,7 +188,7 @@ bool reshadefx::parser::parse_statement(bool scoped)
 	}
 
 	// Shift by two so that the possible values are 0x01 for 'flatten' and 0x02 for 'dont_flatten', equivalent to 'unroll' and 'dont_unroll'
-	selection_control >>= 2;
+	selection_control >>= 4;
 
 	if (peek('{')) // Parse statement block
 		return parse_statement_block(scoped);
@@ -1345,11 +1351,12 @@ bool reshadefx::parser::parse_variable(type type, std::string name, bool global)
 						warning(expression.location, 3571, "negative value specified for property '" + property_name + '\'');
 
 					if (property_name == "Width")
-						texture_info.width = value > 0 ? value : 1;
+						texture_info.width  = value > 0 ? value : 1;
 					else if (property_name == "Height")
 						texture_info.height = value > 0 ? value : 1;
 					else if (property_name == "MipLevels")
-						texture_info.levels = value > 0 ? value : 1; // Also ensures negative values do not cause problems
+						texture_info.levels = value > 0 && value <= std::numeric_limits<uint16_t>::max() ?
+							static_cast<uint16_t>(value) : 1; // Also ensures negative values do not cause problems
 					else if (property_name == "Format")
 						texture_info.format = static_cast<texture_format>(value);
 					else if (property_name == "SRGBTexture" || property_name == "SRGBReadEnable")

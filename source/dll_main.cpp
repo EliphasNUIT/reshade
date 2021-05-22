@@ -10,6 +10,9 @@
 #include <Psapi.h>
 #include <Windows.h>
 
+// Export special symbol to identify modules as ReShade instances
+extern "C" __declspec(dllexport) const char *ReShadeVersion = VERSION_STRING_PRODUCT;
+
 HMODULE g_module_handle = nullptr;
 std::filesystem::path g_reshade_dll_path;
 std::filesystem::path g_reshade_base_path;
@@ -309,6 +312,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 
 		// Initialize Direct3D 12
 		com_ptr<ID3D12Device> device;
+		com_ptr<IDXGIFactory2> dxgi_factory;
 		com_ptr<ID3D12CommandQueue> command_queue;
 		com_ptr<IDXGISwapChain3> swapchain;
 		com_ptr<ID3D12Resource> backbuffers[3];
@@ -316,7 +320,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 		com_ptr<ID3D12CommandAllocator> cmd_alloc;
 		com_ptr<ID3D12GraphicsCommandList> cmd_lists[3];
 
-		HR_CHECK(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device)));
+		HR_CHECK(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&dxgi_factory)));
+		
+		{	HRESULT hr = E_FAIL; IDXGIAdapter *adapter = nullptr;
+			for (UINT i = 0; dxgi_factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++)
+				if (SUCCEEDED(hr = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device))))
+					break;
+			HR_CHECK(hr);
+		}
 
 		// Check if this device was created using d3d12on7 on Windows 7
 		// See https://microsoft.github.io/DirectX-Specs/d3d/D3D12onWin7.html for more information
@@ -341,9 +352,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 			desc.Scaling = DXGI_SCALING_STRETCH;
 			desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
-			com_ptr<IDXGIFactory2> dxgi_factory;
+			
 			com_ptr<IDXGISwapChain1> dxgi_swapchain;
-			HR_CHECK(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG, IID_PPV_ARGS(&dxgi_factory)));
+			
 			HR_CHECK(dxgi_factory->CreateSwapChainForHwnd(command_queue.get(), window_handle, &desc, nullptr, nullptr, &dxgi_swapchain));
 			HR_CHECK(dxgi_swapchain->QueryInterface(&swapchain));
 		}
@@ -445,7 +456,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 			}
 			else
 			{
-				// Synchronization is handled in "runtime_d3d12::on_present"
+				// Synchronization is handled in "runtime_impl::on_present"
 				HR_CHECK(swapchain->Present(1, 0));
 			}
 		}
@@ -514,7 +525,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 			glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			wglSwapLayerBuffers(hdc, WGL_SWAP_MAIN_PLANE);
+#if 1
+			wglSwapLayerBuffers(hdc, WGL_SWAP_MAIN_PLANE); // Call directly for RenderDoc compatibility
+#else
+			SwapBuffers(hdc);
+#endif
 		}
 
 		wglMakeCurrent(nullptr, nullptr);
@@ -798,9 +813,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR lpCmdLine, int nCmdShow
 static PVOID g_exception_handler_handle = nullptr;
 #  endif
 
-// Export special symbol to identify modules as ReShade instances
-extern "C" __declspec(dllexport) const char *ReShadeVersion = VERSION_STRING_PRODUCT;
-
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 {
 	switch (fdwReason)
@@ -904,6 +916,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 		reshade::hooks::register_module(get_system_path() / L"dxgi.dll");
 		reshade::hooks::register_module(get_system_path() / L"opengl32.dll");
 		// Do not register Vulkan hooks, since Vulkan layering mechanism is used instead
+
+		reshade::hooks::register_module(L"openvr_api.dll");
+#ifdef WIN64
+		reshade::hooks::register_module(L"openvr_api64.dll");
+#endif
 
 		LOG(INFO) << "Initialized.";
 		break;

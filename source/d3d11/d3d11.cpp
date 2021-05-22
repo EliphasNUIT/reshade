@@ -32,7 +32,7 @@ HOOK_EXPORT HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *pAdapter, D3D_DRIVER_
 
 HOOK_EXPORT HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *pAdapter, D3D_DRIVER_TYPE DriverType, HMODULE Software, UINT Flags, const D3D_FEATURE_LEVEL *pFeatureLevels, UINT FeatureLevels, UINT SDKVersion, const DXGI_SWAP_CHAIN_DESC *pSwapChainDesc, IDXGISwapChain **ppSwapChain, ID3D11Device **ppDevice, D3D_FEATURE_LEVEL *pFeatureLevel, ID3D11DeviceContext **ppImmediateContext)
 {
-	// Pass on unmodified in case this called from within 'IDXGISwapChain::Present' or 'IDXGIFactory::CreateSwapChain' or 'D3D10CreateDeviceAndSwapChain1', which indicates that the DXGI runtime is trying to create an internal device, which should not be hooked
+	// Pass on unmodified in case this called from within 'CDXGISwapChain::EnsureChildDeviceInternal' or 'D3D10CreateDeviceAndSwapChain1', which indicates that the DXGI runtime is trying to create an internal device, which should not be hooked
 	if (g_in_dxgi_runtime)
 		return reshade::hooks::call(D3D11CreateDeviceAndSwapChain)(
 			pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, pSwapChainDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);
@@ -55,6 +55,16 @@ HOOK_EXPORT HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *pAdapter,
 #ifndef NDEBUG
 	// Remove flag that prevents turning on the debug layer
 	Flags &= ~D3D11_CREATE_DEVICE_PREVENT_ALTERING_LAYER_SETTINGS_FROM_REGISTRY;
+
+	// Perform dummy call to 'CreateDXGIFactory1' to ensure virtual function table hooks are set up correctly
+	// This is done here in case a third party is hooking the factory too, to ensure the call chain of the factory methods is consistent:
+	//    App -> ReShade -> X (some third party that installed hooks) -> driver
+	// Otherwise it may happen that it will be called like this:
+	//    App -> D3D11CreateDeviceAndSwapChain -> X -> driver -> CreateDXGIFactory1
+	// And therefore the virtual function table hooks would be installed to the driver object, rather than the object created by the third party.
+	com_ptr<IDXGIFactory1> dummy_factory;
+	CreateDXGIFactory1(IID_PPV_ARGS(&dummy_factory));
+	dummy_factory.reset();
 #endif
 
 	// Use local feature level variable in case the application did not pass one in
@@ -103,7 +113,8 @@ HOOK_EXPORT HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter *pAdapter,
 		device->GetImmediateContext(&device_context);
 
 		// Change device to proxy for swap chain creation below
-		device = device_proxy = new D3D11Device(dxgi_device, device, device_context);
+		device = device_proxy = new D3D11Device(dxgi_device, device);
+		device_proxy->_immediate_context = new D3D11DeviceContext(device_proxy, device_context);
 	}
 
 	// Swap chain creation is piped through the 'IDXGIFactory::CreateSwapChain' function hook
